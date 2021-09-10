@@ -8,25 +8,15 @@
 
 #include "Vad.h"
 
-bool CheckDriverStatus() {
-    int icheck = 82;
-    NTSTATUS status = 0;
-
-    uintptr_t BaseAddr = Driver::GetBaseAddress(GetCurrentProcessId());
-    if (BaseAddr == 0) {
-        return false;
-    }
-
-    int checked = Driver::read<int>(GetCurrentProcessId(), (uintptr_t)&icheck, &status);
-    if (checked != icheck) {
-        return false;
-    }
-    return true;
-}
-
 std::vector<std::vector<SearchResult>*> prev_results;
 std::vector<std::vector<SearchResult>*> all_results;
 
+
+/*
+ * returns all_results vector as an array of 2-element arrays. each 2-element array
+ * is like [address, value] for a result. use this sparingly once you have narrowed
+ * down a search considerably because python objects waste a crap ton of memory
+ */
 static PyObject* get_results(PyObject* self, PyObject* args) {
 	int target_length;
 	if(!PyArg_ParseTuple(args, "I",
@@ -44,6 +34,11 @@ static PyObject* get_results(PyObject* self, PyObject* args) {
 	return all_py_results;
 }
 
+
+/*
+ * prints the number of bytes used up by all_results so you can truly appreciate
+ * the massive memory usage
+ */
 unsigned long long print_size() {
 	size_t num_bytes = 0;
 	for(size_t i = 0; i < all_results.size(); i++) {
@@ -52,6 +47,14 @@ unsigned long long print_size() {
 	return num_bytes;
 }
 
+
+/*
+ * this is the new_search function, it has a weird name because it was the first
+ * thing in this library and i didnt know what i was doing yet.
+ * it takes all the arguments, creates a list of memory page ranges, and searches
+ * each page range individually. most of this should be done in another function
+ * to keep this main page clean and organized, but whatever.
+ */
 static PyObject* read_all_mem(PyObject* self, PyObject* args) {
 	unsigned int pid;
 	PyObject* vad_list;
@@ -108,6 +111,11 @@ static PyObject* read_all_mem(PyObject* self, PyObject* args) {
 	return Py_BuildValue("I", num_hits); //return number of results as argument to py
 }
 
+
+/*
+ * next_search function was made after i decided this whole thing shouldn't be in one
+ * file, but its still pretty long just because of the python to c++ conversion stuff.
+ */
 static PyObject* next_search(PyObject* self, PyObject* args) {
 	unsigned int pid;
 	PyObject* method_obj;
@@ -165,6 +173,15 @@ static PyObject* next_search(PyObject* self, PyObject* args) {
 	return Py_BuildValue("I", num_hits);
 }
 
+
+/*
+ * searches memory for a string of bytes, some of which may be unspecified
+ * byte strings are like "AA BB CC ?? ?? DD EE ?? FF" where ?? are wildcard or
+ * unknown bytes.
+ *
+ * this function is a slightly modified, copy-pasta'd version of the
+ * read_all_mem/new_search function so theres a lot of junk in this one too
+ */
 static PyObject* sig_scan(PyObject* self, PyObject* args) {
 	unsigned int pid;
 	PyObject* vad_list;
@@ -225,6 +242,13 @@ static PyObject* sig_scan(PyObject* self, PyObject* args) {
 	return Py_BuildValue("I", num_hits); //return number of results as argument to py
 }
 
+
+/*
+ * probably the only well-segregated function here. finds pointer paths from static
+ * memory up to a target memory address which is cool. returns a big ol python dict that
+ * is a tree starting at memory address 0 where each node is an offset from the previous
+ * address that is then traversed as a pointer
+ */
 static PyObject* ptr_scan_static(PyObject* self, PyObject* args) {
 	unsigned int pid;
 	PyObject* vad_list;
@@ -255,7 +279,7 @@ static PyMethodDef funcs[] = {
 static struct PyModuleDef myModule = {
 	PyModuleDef_HEAD_INIT,
 	"c_lib",
-	"c shit",
+	"c functions for searching lots and lots of memory",
 	-1,
 	funcs
 };

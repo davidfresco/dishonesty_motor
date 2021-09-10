@@ -4,6 +4,7 @@
 
 #include "search_funcs.h"
 #include "ptr_funcs.h"
+#include "sigscan.h"
 
 #include "Vad.h"
 
@@ -164,6 +165,66 @@ static PyObject* next_search(PyObject* self, PyObject* args) {
 	return Py_BuildValue("I", num_hits);
 }
 
+static PyObject* sig_scan(PyObject* self, PyObject* args) {
+	unsigned int pid;
+	PyObject* vad_list;
+	PyObject* py_sig_string;
+	if(!PyArg_ParseTuple(args, "IOO",
+			&pid,
+			&vad_list,
+			&py_sig_string)) return NULL;
+	const char* sig_string = PyUnicode_AsUTF8(py_sig_string);
+	int sig_string_length = PyUnicode_GetLength(py_sig_string);
+
+	/*
+	 * sig_bytes is what actually gets searched. each SigByte struct has a byte value
+	 * and offset that describes the byte value at a specific point in the signature.
+	 * this way we don't have to do any "??" comparisons for every byte while we search,
+	 * because we can just check a list of defined bytes at known offsets into the
+	 * signature. it runs really fast which is cool.
+	 */
+	SigByte* sig_bytes = (SigByte*)malloc(sig_string_length);
+	int sig_length = 0;
+	for(int i = 0; i < sig_string_length; i += 2) {
+		if (sig_string[i] == '?' && sig_string[i + 1] == '?')
+			continue;
+		SigByte byte;
+		byte.offset = (uchar)(i / 2);
+		byte.value = (hex_to_bin(sig_string[i]) << 4) | hex_to_bin(sig_string[i + 1]);
+		sig_bytes[sig_length++] = byte;
+	}
+
+	size_t num_vads = PyList_GET_SIZE(vad_list);
+
+	//free memory from previous searches
+	for(size_t i = 0; i < all_results.size(); i++) delete all_results.at(i);
+	for(size_t i = 0; i < prev_results.size(); i++) delete prev_results.at(i);
+	all_results.clear();
+	prev_results.clear();
+
+	//for each vad...
+	for(int i = 0; i < num_vads; i++) {
+		unsigned long long vad_range[2] = { //get page range in vad
+				PyLong_AsUnsignedLongLongMask(PyList_GET_ITEM(PyList_GET_ITEM(vad_list, i), 0)),
+				PyLong_AsUnsignedLongLongMask(PyList_GET_ITEM(PyList_GET_ITEM(vad_list, i), 1))};
+		if(!PyLong_AsUnsignedLongLongMask(PyList_GET_ITEM(PyList_GET_ITEM(vad_list, i), 4)))
+			continue; //skip vads with commit size of 0
+
+		//create results vector for vad then search it
+		std::vector<SearchResult>* results = new std::vector<SearchResult>();
+		sig_scan_vad(pid, vad_range, sig_length, sig_bytes, results);
+		all_results.push_back(results);
+	}
+
+	//after all vads are searched, count up how many hits.
+	size_t num_hits = 0;
+	for(size_t i = 0; i < all_results.size(); i++) {
+		num_hits += all_results.at(i)->size();
+	}
+	std::cout<<"bytes used: "<<print_size()<<std::endl;
+	return Py_BuildValue("I", num_hits); //return number of results as argument to py
+}
+
 static PyObject* ptr_scan_static(PyObject* self, PyObject* args) {
 	unsigned int pid;
 	PyObject* vad_list;
@@ -186,7 +247,7 @@ static PyMethodDef funcs[] = {
 	{"get_results", get_results, METH_VARARGS, "finds next exact"},
 	{"read_all_mem", read_all_mem, METH_VARARGS, "finds next exact"},
 	{"next_search", next_search, METH_VARARGS, "finds next exact"},
-	// {"ptr_scan", ptr_scan, METH_VARARGS, "finds next exact"},
+	{"sig_scan", sig_scan, METH_VARARGS, "finds next exact"},
 	{"ptr_scan_static", ptr_scan_static, METH_VARARGS, "finds next exact"},
 	{NULL, NULL, 0, NULL}
 };
@@ -209,7 +270,6 @@ PyMODINIT_FUNC PyInit_c_lib(void) {
             0,
             ATTRIBUTES);//delete var
 
-        printf("search_utils: No EFI Driver found\n");
     }
 	return PyModule_Create(&myModule);
 }

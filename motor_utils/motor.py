@@ -147,6 +147,53 @@ class Motor:
 
 
 	"""
+	searches for a hex string of format "AA BB ?? CC EE ?? FF" etc, normal sigscan
+	"""
+	def sig_scan(self, signature, vads=None):
+		signature = signature.upper().strip().replace(" ", "")
+		print("searching for", signature)
+		self.var_type = "INT"
+		if vads:
+			self.vads = vads
+		else:
+			self.update_vads()
+		self.start_time = datetime.now()
+		print("starting at:", self.start_time)
+		num_results = c_lib.sig_scan(
+				self.app_pid,
+				self.vads,
+				signature)
+		self.end_time = datetime.now()
+		print("time elapsed:", (self.end_time - self.start_time).total_seconds())
+		print("found", num_results, "matches")
+
+
+	"""
+	searches for a string, just a sigscan but first takes a string encoding and
+	then converts those bytes to a sigscan. the default encoding is the 2-byte
+	wchar windows-style string encoding but you can use utf8 or regular utf16
+	or whatever gets you hits
+	"""
+	def str_scan(self, string, encoding="UTF-16-be", vads=None):
+		print("searching for", string)
+		signature = " ".join("{:02x}".format(i) for i in list(name.encode(encoding)))
+		self.var_type = "INT"
+		if vads:
+			self.vads = vads
+		else:
+			self.update_vads()
+		self.start_time = datetime.now()
+		print("starting at:", self.start_time)
+		num_results = c_lib.sig_scan(
+				self.app_pid,
+				self.vads,
+				signature)
+		self.end_time = datetime.now()
+		print("time elapsed:", (self.end_time - self.start_time).total_seconds())
+		print("found", num_results, "matches")
+
+
+	"""
 	starts a new search for a memory location
 
 	i think right now methods are limited to:
